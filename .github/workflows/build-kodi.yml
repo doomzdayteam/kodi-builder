@@ -358,21 +358,36 @@ jobs:
             exit 0
           fi
           COUNT=0
-          mkdir -p ~/kodi/addons
+          # Use a dedicated staging directory so we only inject custom addons
+          # into the APK, not the entire Kodi built-in addons tree (38MB+).
+          ADDON_STAGE=~/staged-addons
+          mkdir -p "$ADDON_STAGE"
           while IFS= read -r url || [ -n "$url" ]; do
             url="$(echo "$url" | xargs)"
             [ -z "$url" ] || [[ "$url" == \#* ]] && continue
             fname=$(basename "$url")
-            echo "  ⬇️ $fname"
-            if curl -fsSL "$url" -o "/tmp/$fname"; then
-              unzip -q "/tmp/$fname" -d ~/kodi/addons/ 2>/dev/null || true
+            echo "  ⬇️ $fname from $url"
+            # Some hosts (e.g. GitHub Pages) reject bare curl requests.
+            # Try with User-Agent header and retry on failure.
+            if curl -L --retry 3 --retry-delay 5 \
+                 -H "User-Agent: Mozilla/5.0 (Linux; Android) Kodi" \
+                 -o "/tmp/$fname" "$url" 2>&1; then
+              if [ -f "/tmp/$fname" ] && file "/tmp/$fname" | grep -q "Zip"; then
+                unzip -o -q "/tmp/$fname" -d "$ADDON_STAGE/" 2>/dev/null || true
+                echo "  ✅ Extracted $(basename /tmp/$fname)"
+              else
+                echo "  ⚠️ Downloaded file is not a valid zip: /tmp/$fname"
+                file "/tmp/$fname" 2>/dev/null || true
+              fi
               rm -f "/tmp/$fname"
               COUNT=$((COUNT+1))
             else
-              echo "  ⚠️ Failed to download: $url"
+              echo "  ❌ Failed to download: $url"
             fi
           done < "$ADDONS_FILE"
-          echo "✅ $COUNT addon(s) staged"
+          echo "Staged addon directories:"
+          ls -la "$ADDON_STAGE/" 2>/dev/null || echo "  (empty)"
+          echo "✅ $COUNT addon(s) staged in $ADDON_STAGE"
 
       - name: Bake in advancedsettings.xml
         run: |
@@ -781,7 +796,7 @@ jobs:
           ADV_SRC="${{ github.workspace }}/kodi-config/advancedsettings.xml"
           SRC_SRC="${{ github.workspace }}/kodi-config/sources.xml"
           GUI_SRC="${{ github.workspace }}/kodi-config/guisettings.xml"
-          ADDONS_STAGED="$HOME/kodi/addons"
+          ADDONS_STAGED="$HOME/staged-addons"
 
           # --- PHASE 1: Inject config into PREFIX share BEFORE packaging ---
           # The 'make apk' shared target copies $(PREFIX)/share/kodi/* into assets.
