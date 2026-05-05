@@ -123,8 +123,7 @@ jobs:
             curl unzip zip openjdk-17-jdk-headless \
             autoconf libtool pkg-config yasm ccache \
             libgl1-mesa-dev libgles2-mesa-dev \
-            gperf default-jre imagemagick \
-            2>&1 | tail -5
+            gperf default-jre imagemagick
           # Install cmake 3.25+ required by Kodi depends
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake --no-install-recommends 2>/dev/null || true
           cmake --version
