@@ -808,6 +808,19 @@ jobs:
             if [ -d "$ADDONS_STAGED" ] && [ "$(ls -A "$ADDONS_STAGED" 2>/dev/null)" ]; then
               mkdir -p "$SHARE_DIR/addons"
               cp -a "$ADDONS_STAGED/." "$SHARE_DIR/addons/"
+
+              # Also patch addon-manifest.xml in PREFIX share
+              MANIFEST="$SHARE_DIR/system/addon-manifest.xml"
+              if [ -f "$MANIFEST" ]; then
+                for addon_dir in "$ADDONS_STAGED"/*/; do
+                  addon_id=$(basename "$addon_dir")
+                  if ! grep -q "<addon>${addon_id}</addon>" "$MANIFEST"; then
+                    sed -i "s|</addons>|  <addon>${addon_id}</addon>\n</addons>|" "$MANIFEST"
+                    echo "  📋 Registered ${addon_id} in PREFIX addon-manifest.xml"
+                  fi
+                done
+              fi
+
               echo "✅ Injected staged addons into PREFIX share"
             fi
             echo "PREFIX share userdata contents:"
@@ -849,6 +862,27 @@ jobs:
             if [ -d "$ADDONS_STAGED" ] && [ "$(ls -A "$ADDONS_STAGED" 2>/dev/null)" ]; then
               mkdir -p "$ASSETS_DIR/addons"
               cp -a "$ADDONS_STAGED/." "$ASSETS_DIR/addons/"
+
+              # Register each custom addon in addon-manifest.xml so Kodi
+              # recognizes it. Without this entry Kodi ignores the addon
+              # files even though they're present in assets/addons/.
+              MANIFEST="$ASSETS_DIR/system/addon-manifest.xml"
+              if [ -f "$MANIFEST" ]; then
+                for addon_dir in "$ADDONS_STAGED"/*/; do
+                  addon_id=$(basename "$addon_dir")
+                  # Skip if already registered
+                  if ! grep -q "<addon>${addon_id}</addon>" "$MANIFEST"; then
+                    # Insert before the closing </addons> tag
+                    sed -i "s|</addons>|  <addon>${addon_id}</addon>\n</addons>|" "$MANIFEST"
+                    echo "  📋 Registered ${addon_id} in addon-manifest.xml"
+                  else
+                    echo "  ℹ️ ${addon_id} already in addon-manifest.xml"
+                  fi
+                done
+              else
+                echo "  ⚠️ addon-manifest.xml not found at $MANIFEST"
+              fi
+
               echo "✅ Injected staged addons into packaging assets"
               NEEDS_REPACK=true
             fi
