@@ -357,8 +357,6 @@ jobs:
             exit 0
           fi
           COUNT=0
-          # Use a dedicated staging directory so we only inject custom addons
-          # into the APK, not the entire Kodi built-in addons tree (38MB+).
           ADDON_STAGE=~/staged-addons
           mkdir -p "$ADDON_STAGE"
           while IFS= read -r url || [ -n "$url" ]; do
@@ -366,14 +364,12 @@ jobs:
             [ -z "$url" ] || [[ "$url" == \#* ]] && continue
             fname=$(basename "$url")
             echo "  ⬇️ $fname from $url"
-            # Some hosts (e.g. GitHub Pages) reject bare curl requests.
-            # Try with User-Agent header and retry on failure.
             if curl -L --retry 3 --retry-delay 5 \
                  -H "User-Agent: Mozilla/5.0 (Linux; Android) Kodi" \
                  -o "/tmp/$fname" "$url" 2>&1; then
               if [ -f "/tmp/$fname" ] && file "/tmp/$fname" | grep -q "Zip"; then
                 unzip -o -q "/tmp/$fname" -d "$ADDON_STAGE/" 2>/dev/null || true
-                echo "  ✅ Extracted $(basename /tmp/$fname)"
+                echo "  ✅ Extracted $fname"
               else
                 echo "  ⚠️ Downloaded file is not a valid zip: /tmp/$fname"
                 file "/tmp/$fname" 2>/dev/null || true
@@ -388,26 +384,64 @@ jobs:
           ls -la "$ADDON_STAGE/" 2>/dev/null || echo "  (empty)"
           echo "✅ $COUNT addon(s) staged in $ADDON_STAGE"
 
-          # Register each custom addon in the SOURCE TREE's addon-manifest.xml.
-          # This file is included in install_data (system/addon-manifest.xml in
-          # common.txt), so it flows through cmake → bundle → PREFIX/share/kodi →
-          # APK assets automatically. Doing it here (before cmake) means the
-          # registration survives the entire build pipeline without relying on
-          # post-build injection timing.
+          # --- Integrate staged addons into the Kodi source tree ---
+          # Three things must happen BEFORE cmake runs for addons to be
+          # included in the APK:
+          #
+          # 1. Addon files must be in ~/kodi/addons/<addon_id>/
+          # 2. The addon must be listed in cmake/installdata/common/addons.txt
+          #    (cmake only copies explicitly listed addon directories into the
+          #    build tree — there is NO wildcard addons/*)
+          # 3. The addon must be registered in system/addon-manifest.xml
+          #    (Kodi ignores addon files not listed in the manifest)
+
           MANIFEST=~/kodi/system/addon-manifest.xml
-          if [ -f "$MANIFEST" ] && [ -d "$ADDON_STAGE" ]; then
+          INSTALL_ADDONS=~/kodi/cmake/installdata/common/addons.txt
+
+          if [ -d "$ADDON_STAGE" ]; then
             for addon_dir in "$ADDON_STAGE"/*/; do
               [ -d "$addon_dir" ] || continue
               addon_id=$(basename "$addon_dir")
-              if ! grep -q "<addon>${addon_id}</addon>" "$MANIFEST"; then
-                sed -i "s|</addons>|  <addon>${addon_id}</addon>\n</addons>|" "$MANIFEST"
-                echo "  📋 Registered ${addon_id} in source addon-manifest.xml"
-              else
-                echo "  ℹ️ ${addon_id} already in source addon-manifest.xml"
+              echo ""
+              echo "  🔧 Integrating addon: $addon_id"
+
+              # 1. Copy addon files into source tree
+              cp -a "$addon_dir" ~/kodi/addons/
+              echo "    ✅ Copied to ~/kodi/addons/$addon_id/"
+
+              # 2. Add to cmake install data list
+              if [ -f "$INSTALL_ADDONS" ]; then
+                addon_entry="addons/${addon_id}/*"
+                if ! grep -qF "$addon_entry" "$INSTALL_ADDONS"; then
+                  echo "$addon_entry" >> "$INSTALL_ADDONS"
+                  echo "    ✅ Added to cmake installdata/common/addons.txt"
+                else
+                  echo "    ℹ️ Already in cmake addons.txt"
+                fi
+              fi
+
+              # 3. Register in addon-manifest.xml
+              if [ -f "$MANIFEST" ]; then
+                if ! grep -q "<addon>${addon_id}</addon>" "$MANIFEST"; then
+                  sed -i "s|</addons>|  <addon>${addon_id}</addon>\n</addons>|" "$MANIFEST"
+                  echo "    ✅ Registered in addon-manifest.xml"
+                else
+                  echo "    ℹ️ Already in addon-manifest.xml"
+                fi
               fi
             done
-            echo "Manifest tail:"
-            tail -5 "$MANIFEST"
+
+            echo ""
+            echo "--- Verification ---"
+            echo "addon-manifest.xml tail:"
+            tail -5 "$MANIFEST" 2>/dev/null
+            echo "addons.txt tail:"
+            tail -5 "$INSTALL_ADDONS" 2>/dev/null
+            echo "Source addons/ (custom):"
+            for addon_dir in "$ADDON_STAGE"/*/; do
+              addon_id=$(basename "$addon_dir" 2>/dev/null)
+              ls -d ~/kodi/addons/"$addon_id" 2>/dev/null && echo "  ✅ $addon_id present"
+            done
           fi
 
       - name: Bake in advancedsettings.xml
