@@ -388,6 +388,28 @@ jobs:
           ls -la "$ADDON_STAGE/" 2>/dev/null || echo "  (empty)"
           echo "✅ $COUNT addon(s) staged in $ADDON_STAGE"
 
+          # Register each custom addon in the SOURCE TREE's addon-manifest.xml.
+          # This file is included in install_data (system/addon-manifest.xml in
+          # common.txt), so it flows through cmake → bundle → PREFIX/share/kodi →
+          # APK assets automatically. Doing it here (before cmake) means the
+          # registration survives the entire build pipeline without relying on
+          # post-build injection timing.
+          MANIFEST=~/kodi/system/addon-manifest.xml
+          if [ -f "$MANIFEST" ] && [ -d "$ADDON_STAGE" ]; then
+            for addon_dir in "$ADDON_STAGE"/*/; do
+              [ -d "$addon_dir" ] || continue
+              addon_id=$(basename "$addon_dir")
+              if ! grep -q "<addon>${addon_id}</addon>" "$MANIFEST"; then
+                sed -i "s|</addons>|  <addon>${addon_id}</addon>\n</addons>|" "$MANIFEST"
+                echo "  📋 Registered ${addon_id} in source addon-manifest.xml"
+              else
+                echo "  ℹ️ ${addon_id} already in source addon-manifest.xml"
+              fi
+            done
+            echo "Manifest tail:"
+            tail -5 "$MANIFEST"
+          fi
+
       - name: Bake in advancedsettings.xml
         run: |
           SRC="${{ github.workspace }}/kodi-config/advancedsettings.xml"
